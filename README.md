@@ -1686,7 +1686,7 @@ If you've been developing the app locally, follow these instructions to deploy y
 
 1. Deploy to Vercel _(or CDN of your choice - must support Next.js API routes for authentication)_.
 
-   - Follow Vercel’s [deploy instructions](https://nextjs.org/learn/basics/deploying-nextjs-app/deploy).
+   - Follow Vercel’s [deploy instructions](https://nextjs.org/docs/app/getting-started/deploying).
    - Be sure to set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` for your Supabase project.
 
      You can find these in your [project’s API settings](https://supabase.com/dashboard/project/_/settings/api).
