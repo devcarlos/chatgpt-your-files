@@ -72,7 +72,16 @@ export default function ChatPage() {
               normalize: true,
             });
 
-            const embedding = JSON.stringify(Array.from(output.data));
+            // Pad the embedding to 1024 dimensions to match database schema
+            let embeddingArray = Array.from(output.data);
+            if (embeddingArray.length < 1024) {
+              const padding = new Array(1024 - embeddingArray.length).fill(0);
+              embeddingArray = [...embeddingArray, ...padding];
+            } else if (embeddingArray.length > 1024) {
+              embeddingArray = embeddingArray.slice(0, 1024);
+            }
+
+            const embedding = JSON.stringify(embeddingArray);
 
             const {
               data: { session },

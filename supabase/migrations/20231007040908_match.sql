@@ -2,7 +2,7 @@
 --
 -- Returns a setof document_sections so that we can use PostgREST resource embeddings (joins with other tables)
 -- Additional filtering like limits can be chained to this function call
-create or replace function match_document_sections(embedding vector(384), match_threshold float)
+create or replace function match_document_sections(embedding vector(1024), match_threshold float)
 returns setof document_sections
 language plpgsql
 as $$

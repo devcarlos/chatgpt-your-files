@@ -1,9 +1,22 @@
-import { Pipeline, pipeline } from '@xenova/transformers';
 import { PipeParameters, PipeReturnType } from '../hooks/use-pipeline';
+
+// Dynamic import for transformers.js to avoid SSR issues
+let transformers: any;
+let PipelineClass: any;
+let pipelineFunction: any;
+
+async function loadTransformers() {
+  if (!transformers) {
+    transformers = await import('@xenova/transformers');
+    PipelineClass = transformers.Pipeline;
+    pipelineFunction = transformers.pipeline;
+  }
+  return { Pipeline: PipelineClass, pipeline: pipelineFunction };
+}
 
 export type InitEventData = {
   type: 'init';
-  args: Parameters<typeof pipeline>;
+  args: any[];
 };
 
 export type RunEventData = {
@@ -65,9 +78,10 @@ export type OutgoingEventData =
   | ResultEventData;
 
 class PipelineSingleton {
-  static instance?: Pipeline;
+  static instance?: any;
 
-  static async init(...args: Parameters<typeof pipeline>) {
+  static async init(...args: any[]) {
+    const { pipeline } = await loadTransformers();
     this.instance = await pipeline(...args);
   }
 }

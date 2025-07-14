@@ -1,4 +1,4 @@
-import { Pipeline, PretrainedOptions, Tensor } from '@xenova/transformers';
+import { PretrainedOptions, Tensor } from '@xenova/transformers';
 import { useEffect, useState } from 'react';
 import {
   InitEventData,
@@ -6,8 +6,8 @@ import {
   RunEventData,
 } from '../workers/pipeline';
 
-export type PipeParameters = Parameters<Pipeline['_call']>;
-export type PipeReturnType = Awaited<ReturnType<Pipeline['_call']>>;
+export type PipeParameters = any[];
+export type PipeReturnType = any;
 export type PipeFunction = (...args: PipeParameters) => Promise<PipeReturnType>;
 
 /**

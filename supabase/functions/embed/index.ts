@@ -69,23 +69,6 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Initialize the AI model with retry logic
-  let model;
-  try {
-    console.log('🤖 Initializing Supabase AI Session...');
-    model = new Supabase.ai.Session('gte-small');
-    console.log('✅ AI Session initialized successfully');
-  } catch (error) {
-    console.error('❌ Failed to initialize AI Session:', error);
-    return new Response(
-      JSON.stringify({ error: 'Failed to initialize AI model' }),
-      {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-  }
-
   for (const row of rows) {
     const { id, [contentColumn]: content } = row;
 
@@ -97,15 +80,22 @@ Deno.serve(async (req) => {
     try {
       console.log(`🔄 Generating embedding for ${table} id ${id}`);
       
-      // Clean and prepare content
+      // Clean and prepare content very aggressively
       let cleanContent = content
-        .replace(/\r\n/g, '\n')  // Normalize line endings
-        .replace(/\r/g, '\n')    // Handle old Mac line endings
-        .trim();                 // Remove leading/trailing whitespace
+        .replace(/\r\n/g, '\n')     // Normalize line endings
+        .replace(/\r/g, '\n')       // Handle old Mac line endings
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // Remove markdown links [text](url) -> text
+        .replace(/\[[^\]]*\]/g, '')  // Remove remaining markdown references [text]
+        .replace(/\([^)]*\)/g, '')   // Remove parenthetical content
+        .replace(/[^\x20-\x7E\n]/g, '') // Remove non-ASCII characters
+        .replace(/[#*_`~]/g, '')     // Remove markdown formatting characters
+        .replace(/\s+/g, ' ')        // Normalize whitespace
+        .replace(/\n+/g, ' ')        // Convert newlines to spaces
+        .trim();                     // Remove leading/trailing whitespace
       
-      // More aggressive truncation to avoid Content-Length issues
-      if (cleanContent.length > 4000) {
-        cleanContent = cleanContent.substring(0, 4000);
+      // Truncate to approximate token limit (512 tokens ≈ 2000-2500 characters)
+      if (cleanContent.length > 2000) {
+        cleanContent = cleanContent.substring(0, 2000);
         console.log(`📏 Content truncated from ${content.length} to ${cleanContent.length} chars`);
       }
       
@@ -117,10 +107,60 @@ Deno.serve(async (req) => {
       
       console.log(`📝 Processing content: ${cleanContent.length} chars`);
       
-      const output = await model.run(cleanContent, {
-        mean_pool: true,
-        normalize: true,
-      });
+      // Initialize AI Session per row to avoid worker timeout issues
+      let model;
+      let output;
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (retryCount < maxRetries) {
+        try {
+          // Create fresh AI Session for each attempt
+          console.log(`🤖 Initializing AI Session for ${table} id ${id} (attempt ${retryCount + 1})`);
+          
+          // Use gte-small which is supported by Supabase (produces 384 dimensions)
+          // We'll pad to 1024 to match our database schema
+          let modelName = 'gte-small';
+          
+          console.log(`🔧 Using model: ${modelName}`);
+          model = new Supabase.ai.Session(modelName);
+          
+          // Add delay to let worker stabilize
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          output = await model.run(cleanContent, {
+            mean_pool: true,
+            normalize: true,
+          });
+          
+          // Handle different embedding dimensions based on model
+          if (output && output.length !== 1024) {
+            if (output.length > 1024) {
+              // Truncate if too large
+              output = output.slice(0, 1024);
+              console.log(`📏 Embedding truncated from ${output.length + (output.length - 1024)} to 1024 dimensions`);
+            } else {
+              // Pad with zeros if too small (e.g., gte-small produces 384)
+              const padding = new Array(1024 - output.length).fill(0);
+              output = [...output, ...padding];
+              console.log(`📏 Embedding padded from ${output.length - padding.length} to 1024 dimensions`);
+            }
+          }
+          
+          console.log(`✅ AI Session successful for ${table} id ${id} - Generated ${output?.length || 0} dimensions using ${modelName}`);
+          break; // Success, exit retry loop
+        } catch (aiError) {
+          retryCount++;
+          console.log(`🔄 Retry ${retryCount}/${maxRetries} for ${table} id ${id}: ${aiError.message}`);
+          
+          if (retryCount >= maxRetries) {
+            throw aiError; // Re-throw after max retries
+          }
+          
+          // Wait longer between retries to let workers recover
+          await new Promise(resolve => setTimeout(resolve, 3000 * retryCount));
+        }
+      }
 
       const embedding = JSON.stringify(output);
 
