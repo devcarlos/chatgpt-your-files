@@ -4,12 +4,21 @@
 import { createClient } from '@supabase/supabase-js';
 import { Database } from '../_lib/database.ts';
 
-const model = new Supabase.ai.Session('gte-small');
+const supabaseUrl = Deno.env.get('SUPA_URL');
+const supabaseAnonKey = Deno.env.get('SUPA_ANON_KEY');
 
-const supabaseUrl = Deno.env.get('SUPABASE_URL');
-const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+export const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
 
 Deno.serve(async (req) => {
+  // Handle CORS
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
+  }
   if (!supabaseUrl || !supabaseAnonKey) {
     return new Response(
       JSON.stringify({
@@ -60,6 +69,23 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Initialize the AI model with retry logic
+  let model;
+  try {
+    console.log('🤖 Initializing Supabase AI Session...');
+    model = new Supabase.ai.Session('gte-small');
+    console.log('✅ AI Session initialized successfully');
+  } catch (error) {
+    console.error('❌ Failed to initialize AI Session:', error);
+    return new Response(
+      JSON.stringify({ error: 'Failed to initialize AI model' }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
+
   for (const row of rows) {
     const { id, [contentColumn]: content } = row;
 
@@ -68,38 +94,69 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    const output = (await model.run(content, {
-      mean_pool: true,
-      normalize: true,
-    })) as number[];
+    try {
+      console.log(`🔄 Generating embedding for ${table} id ${id}`);
+      
+      // Clean and prepare content
+      let cleanContent = content
+        .replace(/\r\n/g, '\n')  // Normalize line endings
+        .replace(/\r/g, '\n')    // Handle old Mac line endings
+        .trim();                 // Remove leading/trailing whitespace
+      
+      // More aggressive truncation to avoid Content-Length issues
+      if (cleanContent.length > 4000) {
+        cleanContent = cleanContent.substring(0, 4000);
+        console.log(`📏 Content truncated from ${content.length} to ${cleanContent.length} chars`);
+      }
+      
+      // Skip empty or very short content
+      if (cleanContent.length < 10) {
+        console.log(`⏭️ Skipping ${table} id ${id} - content too short (${cleanContent.length} chars)`);
+        continue;
+      }
+      
+      console.log(`📝 Processing content: ${cleanContent.length} chars`);
+      
+      const output = await model.run(cleanContent, {
+        mean_pool: true,
+        normalize: true,
+      });
 
-    const embedding = JSON.stringify(output);
+      const embedding = JSON.stringify(output);
 
-    const { error } = await supabase
-      .from(table)
-      .update({
-        [embeddingColumn]: embedding,
-      })
-      .eq('id', id);
+      const { error } = await supabase
+        .from(table)
+        .update({
+          [embeddingColumn]: embedding,
+        })
+        .eq('id', id);
 
-    if (error) {
+      if (error) {
+        console.error(
+          `❌ Failed to save embedding on '${table}' table with id ${id}:`,
+          error
+        );
+      } else {
+        console.log(
+          `✅ Generated embedding for ${table} id ${id}`
+        );
+      }
+    } catch (error) {
       console.error(
-        `Failed to save embedding on '${table}' table with id ${id}`
+        `❌ Failed to generate embedding for ${table} id ${id}:`,
+        error
       );
+      
+      // Log content details for debugging
+      console.log(`📊 Content details for id ${id}: length=${content.length}, first 100 chars="${content.substring(0, 100)}"`);
+      
+      // Continue with next row instead of failing completely
+      continue;
     }
-
-    console.log(
-      `Generated embedding ${JSON.stringify({
-        table,
-        id,
-        contentColumn,
-        embeddingColumn,
-      })}`
-    );
   }
 
   return new Response(null, {
     status: 204,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 });

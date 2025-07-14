@@ -77,11 +77,8 @@ returns text
 language plpgsql
 security definer
 as $$
-declare
-  secret_value text;
 begin
-  select decrypted_secret into secret_value from vault.decrypted_secrets where name = 'supabase_url';
-  return secret_value;
+  return 'http://kong:8000';
 end;
 $$;
 
@@ -93,22 +90,37 @@ declare
   document_id bigint;
   result int;
 begin
+  raise notice '🚀 Storage trigger fired for bucket: %, path: %', new.bucket_id, new.name;
+  
+  -- Only process files in the 'files' bucket
+  if new.bucket_id != 'files' then
+    raise notice '⏭️ Skipping non-files bucket: %', new.bucket_id;
+    return null;
+  end if;
+
+  raise notice '📄 Creating document record for file: %', new.path_tokens[2];
+  
   insert into documents (name, storage_object_id, created_by)
     values (new.path_tokens[2], new.id, new.owner)
     returning id into document_id;
+
+  raise notice '✅ Document created with ID: %', document_id;
+  raise notice '🌐 Calling process function with URL: %', supabase_url() || '/functions/v1/process';
 
   select
     net.http_post(
       url := supabase_url() || '/functions/v1/process',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'Authorization', current_setting('request.headers')::json->>'authorization'
+        'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU'
       ),
       body := jsonb_build_object(
         'document_id', document_id
       )
     )
   into result;
+
+  raise notice '📡 HTTP POST result: %', result;
 
   return null;
 end;
